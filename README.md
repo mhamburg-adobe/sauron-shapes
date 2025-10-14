@@ -1,6 +1,4 @@
-This is a small shape drawing web application written using the Sauron Rust framework:
-
-    [https://github.com/ivanceras/sauron/]
+This is a small shape drawing web application written using the [Sauron Rust framework](https://github.com/ivanceras/sauron/):
 
 It has more structure than it needs for the task at hand and yet less than one would want in a more complex application.
 

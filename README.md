@@ -28,7 +28,5 @@ Serve using:
 
     basic-http-server -a 0.0.0.0:4000
 
-Then load the web page:
-
-    [http://localhost:4000](http://localhost:4000)
+Then load the [localhost](http://localhost:4000) web page.
 

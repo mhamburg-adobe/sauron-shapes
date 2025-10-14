@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <style>
+    body {
+        margin: 0
+    }
+    .canvas-tracker-div {
+        margin: 0;
+        width: "100%";
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+  </style>
+  <body>
+    <script type=module>
+      import init from './pkg/sauron_shapes.js';
+      await init().catch(console.error);
+    </script>
+  </body>
+</html>

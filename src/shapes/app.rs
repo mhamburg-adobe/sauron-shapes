@@ -3,24 +3,19 @@
 
 use sauron::{MouseEvent, Node, events, id, svg};
 
-use crate::framework::tracker;
+use crate::framework::tracking;
 use crate::shapes::core::{Color, Geometry, Shape, Style, XYPoint};
 use crate::shapes::doc::{Document, ShapeId};
 
-use std::rc::Rc;
 use std::vec::Vec;
 
 // Our model is simple. It consists of the document being edited and
 // information for tools. At this point, the latter just contains
 // the fill color for new shapes.
-
-// FIXME: The model is cloneable not because we ever need to clone it
-// but because we cannot derive tracker cloning without this being
-// cloneable.
-#[derive(Clone)]
 pub struct Model {
     doc: Document,
     fill_color: Color,
+    tracking_state: TrackingState,
 }
 
 // Messages we can use to update the model.
@@ -29,17 +24,13 @@ pub enum Msg {
     ShapeMouseDown(ShapeId, MouseEvent),
     // A mouse down on the background.
     BackgroundMouseDown(MouseEvent),
+    // Tracking event
+    FromTracking(tracking::Event),
 }
 
-// Requests that updates to the model will generate.
-pub enum Request {
-    // Start tracking with a given tracker
-    StartTracker(tracker::Tracker<Model>),
-}
-
-impl Request {
-    fn start_tracker(tracker: Rc<dyn tracker::Interface<Model>>) -> Request {
-        Self::StartTracker(tracker::Tracker::new(tracker))
+impl Msg {
+    pub fn from_tracking(tracking_event: &tracking::Event) -> Self {
+        Self::FromTracking(tracking_event.clone())
     }
 }
 
@@ -51,29 +42,15 @@ impl Model {
         Self::new_demo()
     }
 
-    pub fn update(&mut self, msg: &Msg) -> Vec<Request> {
+    pub fn update(&mut self, msg: &Msg) {
         use Msg::*;
-        let mut requests = Vec::with_capacity(1);
         match msg {
             ShapeMouseDown(shape_id, mouse_down) => {
-                if let Some(shape) = self.doc.get_shape_by_id(shape_id) {
-                    requests.push(Request::start_tracker(Rc::new(ShapeDragTracker::new(
-                        *shape_id, shape, mouse_down,
-                    ))));
-                }
+                DragShape::start(self, shape_id, mouse_down);
             }
+
             BackgroundMouseDown(mouse_down) => {
-                // Get the parameters for the new shape and install
-                // the tracker. Since we have spanned no distance yet,
-                // we don't need to install a shape.
-                let shape_id = self.doc.generate_shape_id();
-                let style = self.get_new_shape_style();
-
-                // Set the tracker
-                requests.push(Request::start_tracker(Rc::new(NewRectTracker::new(
-                    shape_id, style, mouse_down,
-                ))));
-
+                DragNewRect::start(self, mouse_down);
                 // Advance the fill color skipping white. This is purely
                 // part of the demo logic to make shape drawing more
                 // interesting.
@@ -84,17 +61,24 @@ impl Model {
                     }
                 }
             }
+
+            FromTracking(tracking_event) => {
+                // Clone so that we do not get an alias conflict over the
+                // tracking state.
+                self.tracking_state
+                    .clone()
+                    .update_model_for_tracking_event(self, tracking_event)
+            }
         }
-        requests
     }
 
     pub fn view(&self) -> Node<Msg> {
         use svg::attributes::*;
         use svg::*;
 
-        // FIXME: Calculate a real value for capacity.
+        let shape_count = self.doc.shape_ids_sequence_iter().count();
 
-        let mut children = Vec::with_capacity(100);
+        let mut children = Vec::with_capacity(shape_count + 1);
 
         // Add the background
 
@@ -198,51 +182,13 @@ fn background_mouse_down(evt: MouseEvent) -> Msg {
     Msg::BackgroundMouseDown(evt)
 }
 
-struct ShapeDragTracker {
-    shape_id: ShapeId,
-    original_geometry: Geometry,
-    mouse_down_position: XYPoint,
-}
-
-impl ShapeDragTracker {
-    fn new(shape_id: ShapeId, original_shape: &Shape, mouse_event: &MouseEvent) -> Self {
-        Self {
-            shape_id,
-            original_geometry: original_shape.geometry.clone(),
-            mouse_down_position: get_page_coordinates(mouse_event),
-        }
-    }
-
-    fn drag_shape(&self, target: &mut Model, drag_event: &MouseEvent) {
-        let drag_position = get_page_coordinates(drag_event);
-        let delta = drag_position.subtract(&self.mouse_down_position);
-        target.set_geometry_for_shape_with_id(
-            &self.shape_id,
-            self.original_geometry.offset_by(&delta),
-        );
-    }
-}
-
-impl tracker::Interface<Model> for ShapeDragTracker {
-    fn track_mouse_move(
-        &self,
-        target: &mut Model,
-        mouse_event: &MouseEvent,
-    ) -> tracker::Next<Model> {
-        self.drag_shape(target, mouse_event);
-        tracker::Next::Continue
-    }
-    fn track_mouse_up(&self, target: &mut Model, mouse_event: &MouseEvent) {
-        self.drag_shape(target, mouse_event);
-    }
-}
-
 impl Model {
     // Create a new demo model
     fn new_demo() -> Self {
         Self {
             doc: Document::new_demo(),
             fill_color: Color::Red,
+            tracking_state: TrackingState::None,
         }
     }
 
@@ -267,38 +213,72 @@ impl Model {
     fn set_geometry_for_shape_with_id(&mut self, shape_id: &ShapeId, new_geometry: Geometry) {
         self.doc.set_geometry_for_shape_id(shape_id, new_geometry);
     }
-}
 
-// Track new rectangle dragging
+    // Generate a new shape id
+    fn generate_shape_id(&mut self) -> ShapeId {
+        self.doc.generate_shape_id()
+    }
 
-// Given a pair of coordinates, find the mimimum coordinate and the non-negative span
-// to the other coordinate.
+    // Set the tracking state
+    fn set_tracking_state(&mut self, new_tracking_state: TrackingState) {
+        self.tracking_state = new_tracking_state;
+    }
 
-fn to_min_span(x1: f64, x2: f64) -> (f64, f64) {
-    if x1 < x2 {
-        (x1, x2 - x1)
-    } else {
-        (x2, x1 - x2)
+    // Clear the tracking state
+
+    fn stop_tracking(&mut self) {
+        self.tracking_state = TrackingState::None;
     }
 }
 
-struct NewRectTracker {
-    shape_id: ShapeId,
-    style: Style,
-    mouse_down_position: XYPoint,
+// Tracking
+
+// When we are tracking the mouse, we have a tracking state
+// that is used to hold the information about the type of
+// tracking we are doing.
+
+#[derive(Clone)]
+enum TrackingState {
+    None,
+    DragNewRect(DragNewRect),
+    DragShape(DragShape),
 }
 
-impl NewRectTracker {
-    fn new(shape_id: ShapeId, style: Style, mouse_event: &MouseEvent) -> Self {
-        Self {
-            shape_id,
-            style,
-            mouse_down_position: get_page_coordinates(mouse_event),
+// Dispatch updates based on the tracking state
+impl TrackingState {
+    fn update_model_for_tracking_event(&self, model: &mut Model, tracking_event: &tracking::Event) {
+        match self {
+            TrackingState::None => {}
+            TrackingState::DragNewRect(drag_new_rect) => {
+                drag_new_rect.update_model_for_tracking_event(model, tracking_event)
+            }
+            TrackingState::DragShape(drag_shape) => {
+                drag_shape.update_model_for_tracking_event(model, tracking_event)
+            }
         }
     }
+}
 
-    fn drag_new_shape(&self, target: &mut Model, drag_event: &MouseEvent) {
-        let drag_position = get_page_coordinates(drag_event);
+#[derive(Clone)]
+struct DragNewRect {
+    shape_id: ShapeId,
+    mouse_down_position: XYPoint,
+    style: Style,
+}
+
+impl DragNewRect {
+    fn start(model: &mut Model, mouse_down: &MouseEvent) {
+        let shape_id = model.generate_shape_id();
+        let style = model.get_new_shape_style();
+        model.set_tracking_state(TrackingState::DragNewRect(Self {
+            shape_id,
+            style,
+            mouse_down_position: get_page_coordinates(mouse_down),
+        }))
+    }
+
+    fn update_model_for_tracking_event(&self, model: &mut Model, tracking_event: &tracking::Event) {
+        let drag_position = get_page_coordinates(&tracking_event.mouse_event);
         let (min_x, span_x) = to_min_span(self.mouse_down_position.x, drag_position.x);
         let (min_y, span_y) = to_min_span(self.mouse_down_position.y, drag_position.y);
         // If non-empty, upsert the shape
@@ -311,25 +291,58 @@ impl NewRectTracker {
                 geometry,
                 style: self.style.clone(),
             };
-            target.upsert_shape_with_id(&self.shape_id, shape);
+            model.upsert_shape_with_id(&self.shape_id, shape);
         // If empty, delete the shape.
         } else {
-            target.delete_shape_with_id(&self.shape_id)
+            model.delete_shape_with_id(&self.shape_id)
+        }
+        if tracking_event.selector == tracking::Selector::MouseUp {
+            model.stop_tracking()
         }
     }
 }
 
-impl tracker::Interface<Model> for NewRectTracker {
-    fn track_mouse_move(
-        &self,
-        target: &mut Model,
-        mouse_event: &MouseEvent,
-    ) -> tracker::Next<Model> {
-        self.drag_new_shape(target, mouse_event);
-        tracker::Next::Continue
+#[derive(Clone)]
+struct DragShape {
+    shape_id: ShapeId,
+    original_geometry: Geometry,
+    mouse_down_position: XYPoint,
+}
+
+impl DragShape {
+    fn start(model: &mut Model, shape_id: &ShapeId, mouse_down: &MouseEvent) {
+        if let Some(shape) = model.doc.get_shape_by_id(shape_id) {
+            model.set_tracking_state(TrackingState::DragShape(Self {
+                shape_id: *shape_id,
+                original_geometry: shape.geometry.clone(),
+                mouse_down_position: get_page_coordinates(mouse_down),
+            }))
+        }
     }
-    fn track_mouse_up(&self, target: &mut Model, mouse_event: &MouseEvent) {
-        self.drag_new_shape(target, mouse_event);
+
+    fn update_model_for_tracking_event(&self, model: &mut Model, tracking_event: &tracking::Event) {
+        let drag_position = get_page_coordinates(&tracking_event.mouse_event);
+        let delta = drag_position.subtract(&self.mouse_down_position);
+        model.set_geometry_for_shape_with_id(
+            &self.shape_id,
+            self.original_geometry.offset_by(&delta),
+        );
+        if tracking_event.selector == tracking::Selector::MouseUp {
+            model.stop_tracking()
+        }
+    }
+}
+
+// Utlities
+
+// Given a pair of coordinates, find the mimimum coordinate and the non-negative span
+// to the other coordinate.
+
+fn to_min_span(x1: f64, x2: f64) -> (f64, f64) {
+    if x1 < x2 {
+        (x1, x2 - x1)
+    } else {
+        (x2, x1 - x2)
     }
 }
 

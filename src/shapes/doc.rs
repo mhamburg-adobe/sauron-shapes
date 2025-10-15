@@ -145,7 +145,7 @@ impl<'a> Document {
 
     // Get an iterator for the sequence of shape ids from bottom to top.
 
-    pub fn shape_ids_iter(&self) -> std::slice::Iter<'_, ShapeId> {
+    pub fn shape_ids_sequence_iter(&self) -> std::slice::Iter<'_, ShapeId> {
         self.sequence.iter()
     }
 
@@ -162,7 +162,8 @@ impl<'a> Document {
             self.get_shape_by_id(shape_id)
                 .map(|shape| (*shape_id, shape))
         };
-        self.shape_ids_iter().filter_map(to_opt_shape_id_shape)
+        self.shape_ids_sequence_iter()
+            .filter_map(to_opt_shape_id_shape)
     }
 
     // Get a shape if any with a particular id

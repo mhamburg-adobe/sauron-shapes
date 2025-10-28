@@ -43,13 +43,12 @@ impl Model {
     }
 
     pub fn update(&mut self, msg: &Msg) {
-        use Msg::*;
         match msg {
-            ShapeMouseDown(shape_id, mouse_down) => {
+            Msg::ShapeMouseDown(shape_id, mouse_down) => {
                 DragShape::start(self, shape_id, mouse_down);
             }
 
-            BackgroundMouseDown(mouse_down) => {
+            Msg::BackgroundMouseDown(mouse_down) => {
                 DragNewRect::start(self, mouse_down);
                 // Advance the fill color skipping white. This is purely
                 // part of the demo logic to make shape drawing more
@@ -62,7 +61,7 @@ impl Model {
                 }
             }
 
-            FromTracking(tracking_event) => {
+            Msg::FromTracking(tracking_event) => {
                 // Clone so that we do not get an alias conflict over the
                 // tracking state.
                 self.tracking_state

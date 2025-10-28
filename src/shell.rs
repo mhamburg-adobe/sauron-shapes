@@ -81,10 +81,9 @@ impl Application for Model {
     }
 
     fn update(&mut self, msg: Msg) -> Cmd<Msg> {
-        use Msg::*;
         match &msg {
-            FromTracking(evt) => self.update_app(&app::Msg::from_tracking(evt)),
-            ToApp(app_msg) => self.update_app(app_msg),
+            Msg::FromTracking(evt) => self.update_app(&app::Msg::from_tracking(evt)),
+            Msg::ToApp(app_msg) => self.update_app(app_msg),
         }
     }
 }
